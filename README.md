@@ -20,15 +20,46 @@ prompt for scripts.
 
 ## Install
 
+Requires Python 3.11 or newer if installing from source. The prebuilt binaries
+have no Python requirement.
+
+### Installer
+
+The repository is private, so the installer authenticates. Use a token with read
+access to the repository (a fine-grained token needs Contents: read), or sign in
+with `gh` and the installer will pick the token up.
+
+Linux and macOS:
+
+```bash
+GH_TOKEN=... bash scripts/install.sh
+```
+
+Windows (PowerShell):
+
+```powershell
+$env:GH_TOKEN = '...'; .\scripts\install.ps1
+```
+
+The installer downloads the archive for your platform, verifies it against the
+release's `SHA256SUMS`, installs it under `~/.nubor/versions/<version>` with a
+stable entry point at `~/.nubor/bin`, and adds that to PATH. Re-running upgrades
+in place. Set `NUBOR_VERSION` to install a specific release rather than the
+latest.
+
+### From source
+
 ```bash
 pip install .
 ```
 
-Or build a standalone binary (no Python required to run it):
+### Manually
+
+Download the archive for your platform from the releases page along with
+`SHA256SUMS`, verify it, and put the binary somewhere on your PATH:
 
 ```bash
-pip install -r requirements-dev.txt
-./scripts/build-binary.sh
+sha256sum -c SHA256SUMS --ignore-missing
 ```
 
 ## Auth
