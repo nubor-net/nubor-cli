@@ -1,15 +1,30 @@
 [project]
 name = "nubor"
-version = "0.2.0"
+dynamic = ["version"]
 description = "A command-line client for OpenStack clouds"
 readme = "README.md"
-requires-python = ">=3.9"
+# openstacksdk 4.x requires 3.11. click, tabulate and pytest 9 require 3.10.
+# The floor is whichever is highest; declaring anything lower produces an
+# install that resolves on paper and fails on contact.
+requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
     "openstacksdk>=4.0",
     "tabulate>=0.9",
     "PyYAML>=6.0",
 ]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Systems Administration",
+]
+
+[project.urls]
+Source = "https://github.com/nubor-net/nubor-cli"
+Changelog = "https://github.com/nubor-net/nubor-cli/blob/master/CHANGELOG.md"
 
 [project.scripts]
 nubor = "nubor.cli:main"
@@ -17,6 +32,14 @@ nubor = "nubor.cli:main"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+# The version literal lives in src/nubor/__init__.py, not here. setuptools reads
+# it by parsing the module, and the release workflow's tag guard reads the same
+# line without needing the package installed. The reverse arrangement (version
+# here, __init__ reading importlib.metadata) would force the PyInstaller binary
+# to carry dist metadata or lose --version.
+[tool.setuptools.dynamic]
+version = { attr = "nubor.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
