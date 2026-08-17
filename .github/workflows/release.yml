@@ -1,0 +1,198 @@
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+# No attestations:/id-token: here. Artifact attestations require a public repo or
+# a GitHub Enterprise Cloud plan; this repo is private on a personal account, so
+# those permissions would grant nothing and the attest step would fail. Integrity
+# is the SHA256SUMS file plus the fact that artifacts are built only by this
+# workflow, only from a tag that matched the project version.
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # Nothing is built or published unless this passes.
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.guard.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Check tag against project version
+        id: guard
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          project="$(python -c '
+          import ast, pathlib
+          src = pathlib.Path("src/nubor/__init__.py").read_text()
+          for node in ast.parse(src).body:
+              if isinstance(node, ast.Assign) and node.targets[0].id == "__version__":
+                  print(node.value.value)
+                  break
+          else:
+              raise SystemExit("__version__ not found")
+          ')"
+          if [ "$tag" != "$project" ]; then
+            echo "tag $GITHUB_REF_NAME implies version $tag, but the project declares $project" >&2
+            exit 1
+          fi
+          echo "version=$project" >> "$GITHUB_OUTPUT"
+
+      - name: Check the changelog documents this version
+        run: |
+          set -euo pipefail
+          v="${{ steps.guard.outputs.version }}"
+          if ! grep -q "^## \[$v\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no '## [$v]' section; release notes would be empty" >&2
+            exit 1
+          fi
+
+      - run: pip install -e . -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            archive: tar.gz
+          - os: macos-latest
+            target: darwin-arm64
+            archive: tar.gz
+          - os: windows-latest
+            target: windows-x86_64
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - run: pip install -e . -r requirements-dev.txt
+      - run: pyinstaller --clean --noconfirm nubor.spec
+
+      # --version and --help exercise startup and the click tree without needing
+      # credentials. They do not prove the SDK's plugin imports resolve; that
+      # only shows on a real API call. See the release notes caveat.
+      - name: Smoke test the binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=dist/nubor
+          [ -f dist/nubor.exe ] && BIN=dist/nubor.exe
+          "$BIN" --version
+          "$BIN" --help > /dev/null
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="nubor-${{ needs.verify.outputs.version }}-${{ matrix.target }}"
+          tar -C dist -czf "$name.tar.gz" nubor
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $name = "nubor-${{ needs.verify.outputs.version }}-${{ matrix.target }}"
+          Compress-Archive -Path dist/nubor.exe -DestinationPath "$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nubor-${{ matrix.target }}
+          path: nubor-*.${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # Fail loudly rather than publishing a release that is missing a platform.
+      - name: Check all three archives arrived
+        run: |
+          set -euo pipefail
+          cd artifacts
+          ls -l
+          count="$(ls nubor-*.tar.gz nubor-*.zip 2>/dev/null | wc -l)"
+          if [ "$count" -ne 3 ]; then
+            echo "expected 3 archives, found $count" >&2
+            exit 1
+          fi
+
+      # Bare filenames, so `sha256sum -c SHA256SUMS` works in the download dir.
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum nubor-*.tar.gz nubor-*.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Extract release notes from the changelog
+        run: |
+          set -euo pipefail
+          v="${{ needs.verify.outputs.version }}"
+          awk -v ver="$v" '
+            $0 ~ "^## \\[" ver "\\]" { flag = 1; next }
+            flag && /^## / { exit }
+            flag { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "extracted notes are empty for $v" >&2
+            exit 1
+          fi
+          {
+            echo
+            echo "Built by CI from tag ${GITHUB_REF_NAME} (commit ${GITHUB_SHA})."
+            echo "Verify a download with: sha256sum -c SHA256SUMS"
+          } >> notes.md
+          cat notes.md
+
+      # Created as a draft and published only once every asset is attached, so a
+      # failed upload cannot leave a visible release with a missing platform.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            artifacts/nubor-*.tar.gz \
+            artifacts/nubor-*.zip \
+            artifacts/SHA256SUMS
+
+          attached="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets | length')"
+          if [ "$attached" -ne 4 ]; then
+            echo "expected 4 assets on the draft, found $attached; leaving it unpublished" >&2
+            exit 1
+          fi
+
+          gh release edit "${GITHUB_REF_NAME}" --draft=false
