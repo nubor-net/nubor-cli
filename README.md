@@ -25,25 +25,21 @@ have no Python requirement.
 
 ### Installer
 
-The repository is private, so the installer authenticates. Use a token with read
-access to the repository (a fine-grained token needs Contents: read), or sign in
-with `gh` and the installer will pick the token up.
-
 Linux and macOS:
 
 ```bash
-GH_TOKEN=... bash scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/nubor-net/nubor-cli/master/scripts/install.sh | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-$env:GH_TOKEN = '...'; .\scripts\install.ps1
+irm https://raw.githubusercontent.com/nubor-net/nubor-cli/master/scripts/install.ps1 | iex
 ```
 
 The installer downloads the archive for your platform, verifies it against the
 release's `SHA256SUMS`, installs it under `~/.nubor/versions/<version>` with a
-stable entry point at `~/.nubor/bin`, and adds that to PATH. Re-running upgrades
+stable entry point in `~/.nubor/bin`, and adds that to PATH. Re-running upgrades
 in place. Set `NUBOR_VERSION` to install a specific release rather than the
 latest.
 
@@ -60,6 +56,13 @@ Download the archive for your platform from the releases page along with
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
+```
+
+Releases also carry build provenance, so a download can be checked against the
+workflow and commit that produced it:
+
+```bash
+gh attestation verify nubor-0.3.0-linux-x86_64.tar.gz --repo nubor-net/nubor-cli
 ```
 
 ## Auth

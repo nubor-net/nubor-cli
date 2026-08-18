@@ -12,10 +12,13 @@ parsed by the release workflow and their format matters.
 ### Added
 - Binaries for Linux x86_64, macOS arm64 and Windows x86_64, built by CI from the
   release tag and published with a `SHA256SUMS` file.
+- Build provenance for every archive, so a download can be checked against the
+  workflow and commit that produced it with `gh attestation verify`.
 - `scripts/install.sh` and `scripts/install.ps1`, which download the archive for
   the running platform, verify it against `SHA256SUMS`, install it under
   `~/.nubor/versions/<version>` behind a stable entry point, and put it on PATH.
-  Re-running upgrades in place.
+  Re-running upgrades in place, and a build that will not run is rejected before
+  it replaces a working one.
 - `RELEASING.md` describing how a release is cut and what to check afterwards.
 
 ### Changed

@@ -47,10 +47,15 @@ version. That is what happened to 0.2.0.
 
 ## Artifact provenance
 
-There is no signing or attestation. Artifact attestations require a public
-repository or a GitHub Enterprise Cloud plan, and this repository is private on a
-personal account, so the attest step would fail rather than add anything. The
-guarantees are that artifacts are produced only by the release workflow, only from
-a tag whose version was checked against the source, and that `SHA256SUMS` lets a
-download be verified. If stronger provenance is ever needed, making the repository
-public enables attestations at no cost.
+The release workflow attests each archive with `actions/attest-build-provenance`,
+which signs a statement that the file came from this workflow at a specific
+commit. Anyone can check a download against it:
+
+    gh attestation verify nubor-0.3.0-linux-x86_64.tar.gz --repo nubor-net/nubor-cli
+
+`SHA256SUMS` covers the same ground more simply for anyone without `gh`:
+
+    sha256sum -c SHA256SUMS --ignore-missing
+
+Attestation works because the repository is public. On a private repository it
+needs a GitHub Enterprise Cloud plan, and the step fails rather than degrading.

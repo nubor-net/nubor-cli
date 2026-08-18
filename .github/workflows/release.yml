@@ -4,13 +4,12 @@ on:
   push:
     tags: ["v*.*.*"]
 
-# No attestations:/id-token: here. Artifact attestations require a public repo or
-# a GitHub Enterprise Cloud plan; this repo is private on a personal account, so
-# those permissions would grant nothing and the attest step would fail. Integrity
-# is the SHA256SUMS file plus the fact that artifacts are built only by this
-# workflow, only from a tag that matched the project version.
 permissions:
   contents: write
+  # Build provenance. These are only usable because the repository is public;
+  # on a private repository outside GitHub Enterprise the attest step fails.
+  id-token: write
+  attestations: write
 
 env:
   PYTHON_VERSION: "3.12"
@@ -154,6 +153,16 @@ jobs:
           sha256sum nubor-*.tar.gz nubor-*.zip > SHA256SUMS
           cat SHA256SUMS
 
+      # Signs a statement that these exact artifacts came from this workflow at
+      # this commit. Verify a download with:
+      #   gh attestation verify <file> --repo nubor-net/nubor-cli
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            artifacts/nubor-*.tar.gz
+            artifacts/nubor-*.zip
+
       - name: Extract release notes from the changelog
         run: |
           set -euo pipefail
@@ -170,7 +179,10 @@ jobs:
           {
             echo
             echo "Built by CI from tag ${GITHUB_REF_NAME} (commit ${GITHUB_SHA})."
-            echo "Verify a download with: sha256sum -c SHA256SUMS"
+            echo
+            echo "Verify a download:"
+            echo '    sha256sum -c SHA256SUMS --ignore-missing'
+            echo "    gh attestation verify <file> --repo ${GITHUB_REPOSITORY}"
           } >> notes.md
           cat notes.md
 

@@ -3,12 +3,11 @@
 Installs the nubor client on Windows.
 
 .DESCRIPTION
-The repository is private, so downloads are authenticated and release assets are
-fetched through the API rather than a browser download URL, which returns 404
-without a session.
+Downloads the published archive for this platform, verifies it against the
+release checksums, installs it under %USERPROFILE%\.nubor and puts it on PATH.
 
-    $env:GH_TOKEN = '...'; .\install.ps1
-    $env:GH_TOKEN = '...'; .\install.ps1 -Version 0.3.0
+    .\install.ps1
+    .\install.ps1 -Version 0.3.0
 
 Re-running upgrades in place and is safe.
 #>
@@ -28,20 +27,6 @@ $tmp = $null
 function Fail([string]$Message) { Write-Error $Message; exit 1 }
 
 try {
-    # --- token -------------------------------------------------------------
-    $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { $null }
-    if (-not $token -and (Get-Command gh -ErrorAction SilentlyContinue)) {
-        $token = (gh auth token 2>$null)
-    }
-    if (-not $token) {
-        Fail "No credentials. Set `$env:GH_TOKEN to a token with read access to $Repo (fine-grained: Contents read), or run 'gh auth login'."
-    }
-
-    $headers = @{
-        'Authorization'        = "Bearer $token"
-        'X-GitHub-Api-Version' = '2022-11-28'
-    }
-
     # --- platform ----------------------------------------------------------
     if ([Environment]::Is64BitOperatingSystem -ne $true) {
         Fail 'Only 64-bit Windows is supported.'
@@ -56,9 +41,9 @@ try {
     }
 
     try {
-        $release = Invoke-RestMethod -Uri $releaseUrl -Headers ($headers + @{ Accept = 'application/vnd.github+json' })
+        $release = Invoke-RestMethod -Uri $releaseUrl -Headers @{ Accept = 'application/vnd.github+json' }
     } catch {
-        Fail "Could not read the release. Check the token has access to $Repo, and that the version exists."
+        Fail "Could not read the release from $Repo. Check that the version exists."
     }
 
     $tag = $release.tag_name
@@ -76,14 +61,10 @@ try {
 
     $tmp = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid()))
 
-    # Assets on a private repo come from the assets endpoint with an
-    # octet-stream Accept header. The signed redirect target is never printed.
     function Get-Asset([string]$Name, [string]$Destination) {
         $asset = $release.assets | Where-Object { $_.name -eq $Name }
         if (-not $asset) { Fail "Release $tag has no asset named $Name." }
-        Invoke-WebRequest -Uri "$api/repos/$Repo/releases/assets/$($asset.id)" `
-            -Headers ($headers + @{ Accept = 'application/octet-stream' }) `
-            -OutFile $Destination
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $Destination
     }
 
     $archivePath = Join-Path $tmp $archive
