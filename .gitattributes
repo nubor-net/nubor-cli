@@ -1,0 +1,4 @@
+# Everything under guest/ is written to, and executed on, a Linux VM. A CRLF
+# shebang there is a "bad interpreter" error, and the systemd unit would not
+# parse - so keep these LF regardless of the checkout platform.
+guest/** text eol=lf

@@ -133,8 +133,16 @@ def test_disks_delete_declined_makes_no_api_call(fake_conn):
 
 
 def test_images_list(fake_conn):
+    """Only images that can take an ephemeral key are listed by default; see
+    tests/test_ssh.py for the filtering itself."""
     fake_conn.image.images.return_value = [
-        SimpleNamespace(name="ubuntu", status="active", size=1024, visibility="public")
+        SimpleNamespace(
+            name="ubuntu",
+            status="active",
+            size=1024,
+            visibility="public",
+            properties={"nubor_agent": "true"},
+        )
     ]
     result = CliRunner().invoke(main, ["compute", "images", "list"])
     assert result.exit_code == 0

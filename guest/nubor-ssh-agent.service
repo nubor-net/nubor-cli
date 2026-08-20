@@ -1,0 +1,15 @@
+[Unit]
+Description=nubor ephemeral SSH key agent
+# The metadata service lives on the link-local address, so there is nothing to
+# sync until the network is up.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nubor-ssh-agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

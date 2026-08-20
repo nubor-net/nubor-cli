@@ -7,6 +7,33 @@ parsed by the release workflow and their format matters.
 
 ## [Unreleased]
 
+### Added
+- `nubor compute instances ssh`, which resolves an instance's address and login
+  user from Nova and hands off to the system `ssh`. Everything after the
+  instance name is passed through, so `-L`, `-o` and remote commands work.
+- Short-lived SSH keys. `guest/nubor-ssh-agent` watches the metadata service
+  from inside an instance and maintains a managed block in a user's
+  `authorized_keys`; nubor mints an ed25519 key per session, publishes it as
+  instance metadata, and revokes it on exit, with an embedded expiry as the
+  backstop. Cloud-init reads keys only at first boot, so without the agent a
+  key injected later is invisible - which is why this only turns on when the
+  instance or image is marked `nubor_agent=true`.
+- `--tunnel-through HOST` (`ssh -J`) and `--proxy-command CMD` for instances
+  with no route from the client, plus `instances ssh-proxy` to save a standing
+  proxy command. A bare `instances ssh` tries the direct address first and falls
+  back only when there is none.
+- `nubor compute images prune`, which deletes images carrying neither
+  `nubor_agent=true` nor `nubor_keep=true`. It prompts, supports `--dry-run`,
+  skips images an instance is booted from, and refuses to run when it cannot
+  list instances across projects - "unused by me" is not a safe basis for
+  deleting a shared image. Mark service images (Octavia amphora, Trove guest,
+  Manila, Magnum node images) with `nubor_keep=true` first.
+
+### Changed
+- `nubor compute images list` now shows only images marked `nubor_agent=true`,
+  the ones that can take an ephemeral key. `--all` restores the old output and
+  adds the property as a column.
+
 ## [0.3.0] - 2026-08-17
 
 ### Added
