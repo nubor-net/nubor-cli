@@ -19,6 +19,7 @@ prompt for scripts.
 | `nubor container clusters list / describe / create / delete` | Magnum |
 | `nubor config configurations list / activate` | clouds.yaml |
 | `nubor auth login / list` | Keystone |
+| `nubor components list / update` | nubor release installer |
 
 ## Install
 
@@ -44,6 +45,14 @@ release's `SHA256SUMS`, installs it under `~/.nubor/versions/<version>` with a
 stable entry point in `~/.nubor/bin`, and adds that to PATH. Re-running upgrades
 in place. Set `NUBOR_VERSION` to install a specific release rather than the
 latest.
+
+Once installed, nubor can update itself through the same checksum-verifying
+installer:
+
+```bash
+nubor components list
+nubor components update
+```
 
 ### From source
 

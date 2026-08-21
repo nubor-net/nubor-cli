@@ -6,6 +6,7 @@ import click
 
 from nubor import __version__
 from nubor.commands.auth import auth
+from nubor.commands.components import components
 from nubor.commands.compute import compute
 from nubor.commands.config_cmd import config
 from nubor.commands.container import container
@@ -19,5 +20,6 @@ def main() -> None:
 
 main.add_command(auth)
 main.add_command(compute)
+main.add_command(components)
 main.add_command(config)
 main.add_command(container)

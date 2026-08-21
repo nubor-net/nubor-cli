@@ -7,6 +7,12 @@ parsed by the release workflow and their format matters.
 
 ## [Unreleased]
 
+### Added
+
+- `nubor components list` reports the installed CLI version.
+- `nubor components update` installs the latest or a selected release
+  through the existing checksum-verifying platform installer.
+
 ## [0.4.0] - 2026-08-22
 
 ### Added
