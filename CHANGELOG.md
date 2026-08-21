@@ -7,7 +7,13 @@ parsed by the release workflow and their format matters.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-22
+
 ### Added
+- `nubor compute instances start`, `stop` and `reboot`, including `reboot
+  --hard` for a power-cycle through Nova.
+- `nubor compute flavors list` and `nubor compute networks list` for discovering
+  valid inputs before creating an instance.
 - `nubor compute instances ssh`, which resolves an instance's address and login
   user from Nova and hands off to the system `ssh`. Everything after the
   instance name is passed through, so `-L`, `-o` and remote commands work.
@@ -33,6 +39,12 @@ parsed by the release workflow and their format matters.
 - `nubor compute images list` now shows only images marked `nubor_agent=true`,
   the ones that can take an ephemeral key. `--all` restores the old output and
   adds the property as a column.
+
+### Fixed
+- `nubor compute instances create --wait` now reports Nova's fault when a server
+  enters `ERROR` instead of printing an internal Python traceback.
+- The README is valid UTF-8, so source and editable package builds no longer
+  fail while reading the package description.
 
 ## [0.3.0] - 2026-08-17
 
