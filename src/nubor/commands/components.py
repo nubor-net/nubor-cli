@@ -29,12 +29,32 @@ def components() -> None:
 
 
 @components.command("list")
+@click.option(
+    "--only-local-state",
+    is_flag=True,
+    help="Do not contact GitHub to check the latest available version.",
+)
 @FORMAT_OPTION
-def components_list(fmt: str) -> None:
+def components_list(only_local_state: bool, fmt: str) -> None:
     """List installed components."""
+    latest = "unknown" if only_local_state else _latest_version()
+    status = "Installed" if latest in {"unknown", __version__} else "Update Available"
+    if fmt == "table":
+        click.echo(f"Your current nubor CLI version is: {__version__}")
+        if latest != "unknown":
+            click.echo(f"The latest available version is: {latest}")
+        click.echo()
     emit(
-        [{"component": "nubor", "version": __version__, "status": "installed"}],
-        ["component", "version", "status"],
+        [
+            {
+                "status": status,
+                "name": "nubor CLI core",
+                "id": "nubor",
+                "installed_version": __version__,
+                "latest_version": latest,
+            }
+        ],
+        ["status", "name", "id", "installed_version", "latest_version"],
         fmt,
     )
 
@@ -107,7 +127,7 @@ def components_update(target: str | None, quiet: bool) -> None:
     """Update nubor using the checksum-verifying release installer."""
     version = _validated_version(target) if target else _latest_version()
     if version == __version__:
-        click.echo(f"nubor {__version__} is already up to date.")
+        click.echo("All components are up to date.")
         return
     confirm([f"This will update nubor from {__version__} to {version}."], quiet)
     _run_installer(version)

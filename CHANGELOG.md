@@ -9,7 +9,8 @@ parsed by the release workflow and their format matters.
 
 ### Added
 
-- `nubor components list` reports the installed CLI version.
+- `nubor components list` reports installed and available versions in a
+  gcloud-style component table, with an offline `--only-local-state` mode.
 - `nubor components update` installs the latest or a selected release
   through the existing checksum-verifying platform installer.
 

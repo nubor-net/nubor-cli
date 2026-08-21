@@ -8,13 +8,32 @@ from nubor import __version__
 from nubor.cli import main
 
 
-def test_components_list() -> None:
+def test_components_list(monkeypatch) -> None:
+    monkeypatch.setattr("nubor.commands.components._latest_version", lambda: "9.8.7")
     result = CliRunner().invoke(main, ["components", "list", "--format", "json"])
 
     assert result.exit_code == 0
     assert json.loads(result.output) == [
-        {"component": "nubor", "version": __version__, "status": "installed"}
+        {
+            "status": "Update Available",
+            "name": "nubor CLI core",
+            "id": "nubor",
+            "installed_version": __version__,
+            "latest_version": "9.8.7",
+        }
     ]
+
+
+def test_components_list_local_state_never_calls_network(monkeypatch) -> None:
+    def latest() -> str:
+        raise AssertionError("network called")
+
+    monkeypatch.setattr("nubor.commands.components._latest_version", latest)
+    result = CliRunner().invoke(main, ["components", "list", "--only-local-state"])
+
+    assert result.exit_code == 0
+    assert "nubor CLI core" in result.output
+    assert "unknown" in result.output
 
 
 def test_components_update_skips_current_version(monkeypatch) -> None:
@@ -26,7 +45,7 @@ def test_components_update_skips_current_version(monkeypatch) -> None:
     result = CliRunner().invoke(main, ["components", "update", "--version", __version__])
 
     assert result.exit_code == 0
-    assert "already up to date" in result.output
+    assert "All components are up to date" in result.output
 
 
 def test_components_update_runs_confirmed_version(monkeypatch) -> None:

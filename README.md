@@ -54,6 +54,9 @@ nubor components list
 nubor components update
 ```
 
+The list shows the local and latest available versions in a gcloud-style
+component table. Pass `--only-local-state` when working offline.
+
 ### From source
 
 ```bash
