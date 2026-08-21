@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""nubor-ssh-agent - sync short-lived SSH keys from OpenStack instance metadata.
+
+This is the piece OpenStack does not ship. Cloud-init reads SSH keys once, at
+first boot, and nothing afterwards re-reads them - so a key added to an
+instance's metadata later is never seen by the guest. Some other clouds solve
+this with a resident agent that watches the metadata service; this is that
+agent, for OpenStack.
+
+`nubor instances ssh` writes entries into the instance's Nova metadata:
+
+    nubor_ssh_<id>  =  <user>:<expiry-epoch>:<ssh-ed25519 public key>
+
+and this agent polls the metadata service, validates them, and maintains a
+managed block in each named user's authorized_keys. Expired entries are dropped
+on the next pass, so a key that is never cleaned up still stops working.
+
+Requires python3 (guaranteed - cloud-init is written in it) and nothing else.
+Reads the metadata SERVICE, not the config drive: a config drive is written once
+at boot and would never show a key injected later.
+"""
+
+import json
+import os
+import pwd
+import stat
+import sys
+import time
+import urllib.request
+
+METADATA_URL = "http://169.254.169.254/openstack/latest/meta_data.json"
+METADATA_PREFIX = "nubor_ssh_"
+POLL_SECONDS = 10
+STATE_FILE = "/var/lib/nubor/managed-users"
+
+BEGIN_MARK = "# BEGIN nubor ephemeral keys - managed by nubor-ssh-agent, do not edit"
+END_MARK = "# END nubor ephemeral keys"
+
+# Only key types we are willing to write. ed25519 is what nubor mints; the
+# others are here so a hand-placed entry from a human still works.
+KEY_TYPES = ("ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "sk-ssh-ed25519@openssh.com")
+
+
+def log(message):
+    print(f"nubor-ssh-agent: {message}", flush=True)
+
+
+def fetch_metadata():
+    with urllib.request.urlopen(METADATA_URL, timeout=5) as response:
+        return json.loads(response.read().decode())
+
+
+def parse_entries(meta, now):
+    """Metadata -> {user: [pubkey, ...]}, dropping anything malformed or expired.
+
+    Every field is attacker-shaped input as far as this function is concerned:
+    it runs as root and its output lands in authorized_keys, so a bad parse is
+    a root compromise. Nothing here is permissive.
+    """
+    users = {}
+    for name, value in meta.items():
+        if not name.startswith(METADATA_PREFIX):
+            continue
+        parts = value.split(":", 2)
+        if len(parts) != 3:
+            log(f"ignoring {name}: expected user:expiry:key")
+            continue
+        user, expiry, pubkey = parts
+
+        if not expiry.isdigit() or int(expiry) < now:
+            continue  # expired, or an expiry we refuse to interpret
+
+        # A newline here would let one metadata entry append arbitrary extra
+        # authorized_keys lines - including ones with command= or other options.
+        if "\n" in pubkey or "\r" in pubkey:
+            log(f"ignoring {name}: newline in key")
+            continue
+        fields = pubkey.split()
+        if len(fields) < 2 or fields[0] not in KEY_TYPES:
+            log(f"ignoring {name}: not a bare supported public key")
+            continue
+
+        try:
+            pwd.getpwnam(user)
+        except KeyError:
+            log(f"ignoring {name}: no such local user '{user}'")
+            continue
+
+        users.setdefault(user, []).append(" ".join(fields[:2]))
+    return users
+
+
+def strip_block(lines):
+    """Drop our managed block, leaving the user's own keys untouched."""
+    out, inside = [], False
+    for line in lines:
+        if line.strip() == BEGIN_MARK:
+            inside = True
+        elif line.strip() == END_MARK:
+            inside = False
+        elif not inside:
+            out.append(line)
+    return out
+
+
+def write_authorized_keys(user, keys):
+    entry = pwd.getpwnam(user)
+    ssh_dir = os.path.join(entry.pw_dir, ".ssh")
+    path = os.path.join(ssh_dir, "authorized_keys")
+
+    existing = []
+    if os.path.exists(path):
+        with open(path) as handle:
+            existing = handle.read().splitlines()
+    desired = strip_block(existing)
+    if keys:
+        desired += [BEGIN_MARK, *keys, END_MARK]
+
+    if desired == existing:
+        return False
+
+    os.makedirs(ssh_dir, exist_ok=True)
+    os.chown(ssh_dir, entry.pw_uid, entry.pw_gid)
+    os.chmod(ssh_dir, stat.S_IRWXU)
+
+    # Write via a temp file in the same directory so a crash mid-write cannot
+    # leave the user with a truncated (or absent) authorized_keys.
+    tmp = path + ".nubor-tmp"
+    with open(tmp, "w") as handle:
+        handle.write("\n".join(desired) + ("\n" if desired else ""))
+    os.chown(tmp, entry.pw_uid, entry.pw_gid)
+    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
+    os.replace(tmp, path)
+    log(f"{user}: {len(keys)} ephemeral key(s)")
+    return True
+
+
+def read_state():
+    try:
+        with open(STATE_FILE) as handle:
+            return {line.strip() for line in handle if line.strip()}
+    except FileNotFoundError:
+        return set()
+
+
+def write_state(users):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    with open(STATE_FILE, "w") as handle:
+        handle.write("\n".join(sorted(users)) + "\n")
+
+
+def sync_once():
+    meta = fetch_metadata().get("meta") or {}
+    users = parse_entries(meta, int(time.time()))
+
+    # Users we wrote to last time but that have no live keys now must have their
+    # block cleared - that is what makes expiry actually take effect.
+    for stale in read_state() - set(users):
+        users.setdefault(stale, [])
+
+    touched = set()
+    for user, keys in users.items():
+        try:
+            write_authorized_keys(user, keys)
+        except OSError as exc:
+            log(f"{user}: {exc}")
+            continue
+        if keys:
+            touched.add(user)
+    write_state(touched)
+
+
+def main():
+    if os.geteuid() != 0:
+        sys.exit("nubor-ssh-agent must run as root")
+    once = "--once" in sys.argv[1:]
+    while True:
+        try:
+            sync_once()
+        except Exception as exc:  # noqa: BLE001 - a bad poll must never stop the loop
+            log(f"sync failed: {exc}")
+        if once:
+            return
+        time.sleep(POLL_SECONDS)
+
+
+if __name__ == "__main__":
+    main()
