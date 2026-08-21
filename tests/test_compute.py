@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import openstack.exceptions
+import pytest
 from click.testing import CliRunner
 
 from nubor.cli import main
@@ -57,6 +58,34 @@ def test_instances_delete_quiet_skips_prompt(fake_conn):
     result = CliRunner().invoke(main, ["compute", "instances", "delete", "probe", "-q"])
     assert result.exit_code == 0
     fake_conn.compute.delete_server.assert_called_once_with(server)
+
+
+@pytest.mark.parametrize(
+    ("command", "method", "extra_args"),
+    [
+        ("start", "start_server", ()),
+        ("stop", "stop_server", ()),
+        ("reboot", "reboot_server", ("SOFT",)),
+    ],
+)
+def test_instance_actions_call_openstack(fake_conn, command, method, extra_args):
+    server = _named_mock("probe", id="s-1", status="ACTIVE")
+    fake_conn.compute.find_server.return_value = server
+
+    result = CliRunner().invoke(main, ["compute", "instances", command, "probe", "-q"])
+
+    assert result.exit_code == 0
+    getattr(fake_conn.compute, method).assert_called_once_with(server, *extra_args)
+
+
+def test_instances_hard_reboot(fake_conn):
+    server = _named_mock("probe", id="s-1", status="ACTIVE")
+    fake_conn.compute.find_server.return_value = server
+
+    result = CliRunner().invoke(main, ["compute", "instances", "reboot", "probe", "--hard", "-q"])
+
+    assert result.exit_code == 0
+    fake_conn.compute.reboot_server.assert_called_once_with(server, "HARD")
 
 
 def test_instances_create_resolves_and_confirms(fake_conn):
@@ -114,6 +143,44 @@ def test_instances_create_declined_makes_no_api_call(fake_conn):
     fake_conn.compute.create_server.assert_not_called()
 
 
+def test_instances_create_wait_reports_nova_fault_without_traceback(fake_conn):
+    fake_conn.compute.find_flavor.return_value = _named_mock("e2-small", id="f-1")
+    fake_conn.image.find_image.return_value = _named_mock("ubuntu", id="i-1")
+    fake_conn.network.find_network.return_value = _named_mock("default", id="n-1")
+    building = _named_mock("probe", id="s-1", status="BUILD")
+    failed = _named_mock(
+        "probe", id="s-1", status="ERROR", fault={"message": "No valid host was found."}
+    )
+    fake_conn.compute.create_server.return_value = building
+    fake_conn.compute.wait_for_server.side_effect = openstack.exceptions.ResourceFailure(
+        "transitioned to ERROR"
+    )
+    fake_conn.compute.get_server.return_value = failed
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "compute",
+            "instances",
+            "create",
+            "probe",
+            "--flavor",
+            "e2-small",
+            "--image",
+            "ubuntu",
+            "--network",
+            "default",
+            "--wait",
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "No valid host was found." in result.output
+    assert "Traceback" not in result.output
+    fake_conn.compute.get_server.assert_called_once_with("s-1")
+
+
 def test_disks_create_quiet(fake_conn):
     fake_conn.block_storage.create_volume.return_value = _named_mock(
         "d1", id="v-1", status="creating"
@@ -147,3 +214,33 @@ def test_images_list(fake_conn):
     result = CliRunner().invoke(main, ["compute", "images", "list"])
     assert result.exit_code == 0
     assert "ubuntu" in result.output
+
+
+def test_flavors_list(fake_conn):
+    fake_conn.compute.flavors.return_value = [
+        SimpleNamespace(name="m1.tiny", vcpus=1, ram=512, disk=1, is_public=True)
+    ]
+
+    result = CliRunner().invoke(main, ["compute", "flavors", "list"])
+
+    assert result.exit_code == 0
+    assert "m1.tiny" in result.output
+    assert "512" in result.output
+
+
+def test_networks_list(fake_conn):
+    fake_conn.network.networks.return_value = [
+        SimpleNamespace(
+            name="lan",
+            status="ACTIVE",
+            is_shared=False,
+            is_router_external=False,
+            subnet_ids=["subnet-1"],
+        )
+    ]
+
+    result = CliRunner().invoke(main, ["compute", "networks", "list"])
+
+    assert result.exit_code == 0
+    assert "lan" in result.output
+    assert "subnet-1" in result.output

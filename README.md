@@ -11,7 +11,9 @@ prompt for scripts.
 
 | Command | Backs onto |
 |---|---|
-| `nubor compute instances list / describe / create / delete / ssh` | Nova |
+| `nubor compute instances list / describe / create / delete / start / stop / reboot / ssh` | Nova |
+| `nubor compute flavors list` | Nova |
+| `nubor compute networks list` | Neutron |
 | `nubor compute images list / prune` | Glance |
 | `nubor compute disks list / create / delete` | Cinder |
 | `nubor container clusters list / describe / create / delete` | Magnum |
@@ -91,6 +93,11 @@ nubor auth login
 nubor compute instances list
 nubor compute instances create web1 --flavor m1.small --image ubuntu-24.04 --network lan --wait
 nubor compute instances describe web1 --format json
+nubor compute instances stop web1
+nubor compute instances start web1
+nubor compute instances reboot web1       # add --hard to power-cycle
+nubor compute flavors list
+nubor compute networks list
 nubor compute disks create scratch --size 10
 nubor compute disks delete scratch          # prompts; add -q to skip
 nubor container clusters list
@@ -109,7 +116,7 @@ Nova knows the address; it does not know which account your key landed in.
 nubor takes the first answer it finds:
 
 1. server metadata `ssh_user` (per instance, settable on a running server),
-2. the image's **`os_admin_user`** property — a standard Glance field, and the
+2. the image's **`os_admin_user`** property â€” a standard Glance field, and the
    right place to put it,
 3. a guess from the image name / `os_distro`,
 4. `--user`, which beats all of the above.
@@ -123,7 +130,7 @@ openstack image set --property os_admin_user=ubuntu <image>
 ### Ephemeral keys
 
 Cloud-init reads SSH keys **once, at first boot**, and nothing re-reads them
-afterwards — so a key added to an instance's metadata later is never seen by the
+afterwards â€” so a key added to an instance's metadata later is never seen by the
 guest. A resident agent is what makes per-session keys possible.
 
 `guest/nubor-ssh-agent` is that missing piece. With it installed, nubor mints an
@@ -139,7 +146,7 @@ openstack server create --user-data guest/cloud-config.yaml ...
 openstack image set --property nubor_agent=true --property os_admin_user=ubuntu <image>
 ```
 
-The `nubor_agent=true` marker — on the image, or on the instance — is how nubor
+The `nubor_agent=true` marker â€” on the image, or on the instance â€” is how nubor
 knows injection will actually be picked up; without it, injecting would just
 hang. Override either way with `--ephemeral-key` / `--no-ephemeral-key`, and set
 the lifetime with `--key-ttl` (default 300s).
@@ -165,12 +172,12 @@ nubor expands `{instance}` and `{address}`; ssh expands the usual `%h`/`%p`.
 shell, and `ssh-proxy --clear` forgets the saved one.
 
 The port is checked before anything is minted, so an unreachable address is
-reported as unreachable — with the causes worth checking — instead of being
+reported as unreachable â€” with the causes worth checking â€” instead of being
 blamed on the guest agent.
 
 ## Images and the agent
 
-`nubor compute images list` shows only images marked `nubor_agent=true` — the
+`nubor compute images list` shows only images marked `nubor_agent=true` â€” the
 ones that can take an ephemeral key. `--all` shows everything, with the property
 as a column.
 
@@ -179,7 +186,7 @@ nor `nubor_keep=true`. It lists what will go and prompts (`-q` to skip,
 `--dry-run` to stop after the list), and skips any image an instance is booted
 from.
 
-Mark your service images first — they are built by their own pipelines, will
+Mark your service images first â€” they are built by their own pipelines, will
 never carry the agent, and the cloud loses those services if they go:
 
 ```bash
@@ -203,7 +210,7 @@ ruff check . && ruff format --check .
 Tests never touch a network; the connection is mocked at the `openstack.connect`
 boundary.
 
-`guest/` holds the in-guest agent. `guest/cloud-config.yaml` is **generated** —
+`guest/` holds the in-guest agent. `guest/cloud-config.yaml` is **generated** â€”
 run `python guest/build-cloud-config.py` after changing the agent or its unit
 file. `python guest/test_agent.py` is a dependency-free self-check for the
 agent's parser, runnable from inside a guest where nubor is not installed.

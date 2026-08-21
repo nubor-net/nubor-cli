@@ -1,4 +1,4 @@
-"""The compute group: Nova instances, Glance images, Cinder disks."""
+"""OpenStack compute resources: instances, flavors, networks, images, and disks."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from nubor.core.output import CLOUD_OPTION, FORMAT_OPTION, emit
 
 @click.group()
 def compute() -> None:
-    """Nova instances, Glance images, Cinder disks."""
+    """Nova, Neutron, Glance, and Cinder resources."""
 
 
 # --------------------------------------------------------------------------
@@ -103,7 +103,15 @@ def instances_create(
         args["key_name"] = key_name
     server = conn.compute.create_server(**args)
     if wait:
-        server = conn.compute.wait_for_server(server)
+        try:
+            server = conn.compute.wait_for_server(server)
+        except openstack.exceptions.ResourceFailure as exc:
+            server = conn.compute.get_server(server.id)
+            fault = getattr(server, "fault", None) or {}
+            reason = fault.get("message") or str(exc)
+            raise click.ClickException(
+                f"instance '{server.name}' (id: {server.id}) entered ERROR: {reason}"
+            ) from None
     click.echo(f"Created instance '{server.name}' (id: {server.id}, status: {server.status}).")
 
 
@@ -124,6 +132,53 @@ def instances_delete(name_or_id: str, wait: bool, quiet: bool, cloud_override: s
     if wait:
         conn.compute.wait_for_delete(server)
     click.echo(f"Deleted instance '{server.name}'.")
+
+
+@instances.command("start")
+@click.argument("name_or_id")
+@QUIET_OPTION
+@CLOUD_OPTION
+def instances_start(name_or_id: str, quiet: bool, cloud_override: str | None) -> None:
+    """Start a stopped instance."""
+    conn = connect(cloud_override)
+    server = find_or_exit(conn.compute.find_server, name_or_id, "instance")
+    confirm([f"This will start instance '{server.name}' (status: {server.status})."], quiet)
+    conn.compute.start_server(server)
+    click.echo(f"Started instance '{server.name}'.")
+
+
+@instances.command("stop")
+@click.argument("name_or_id")
+@QUIET_OPTION
+@CLOUD_OPTION
+def instances_stop(name_or_id: str, quiet: bool, cloud_override: str | None) -> None:
+    """Stop a running instance."""
+    conn = connect(cloud_override)
+    server = find_or_exit(conn.compute.find_server, name_or_id, "instance")
+    confirm([f"This will stop instance '{server.name}' (status: {server.status})."], quiet)
+    conn.compute.stop_server(server)
+    click.echo(f"Stopped instance '{server.name}'.")
+
+
+@instances.command("reboot")
+@click.argument("name_or_id")
+@click.option("--hard", is_flag=True, help="Power-cycle instead of requesting a soft reboot.")
+@QUIET_OPTION
+@CLOUD_OPTION
+def instances_reboot(name_or_id: str, hard: bool, quiet: bool, cloud_override: str | None) -> None:
+    """Reboot an instance (soft by default)."""
+    conn = connect(cloud_override)
+    server = find_or_exit(conn.compute.find_server, name_or_id, "instance")
+    reboot_type = "HARD" if hard else "SOFT"
+    confirm(
+        [
+            f"This will {reboot_type.lower()} reboot instance '{server.name}' "
+            f"(status: {server.status})."
+        ],
+        quiet,
+    )
+    conn.compute.reboot_server(server, reboot_type)
+    click.echo(f"Rebooted instance '{server.name}' ({reboot_type.lower()}).")
 
 
 @instances.command("ssh-proxy")
@@ -445,6 +500,58 @@ def images_prune(dry_run: bool, quiet: bool, cloud_override: str | None) -> None
             click.echo(f"deleted {image.name}")
         except openstack.exceptions.SDKException as exc:
             click.echo(f"error: could not delete {image.name}: {exc}", err=True)
+
+
+# --------------------------------------------------------------------------
+# flavors (Nova)
+# --------------------------------------------------------------------------
+@compute.group()
+def flavors() -> None:
+    """Nova instance flavors."""
+
+
+@flavors.command("list")
+@CLOUD_OPTION
+@FORMAT_OPTION
+def flavors_list(cloud_override: str | None, fmt: str) -> None:
+    conn = connect(cloud_override)
+    rows = [
+        {
+            "name": flavor.name,
+            "vcpus": flavor.vcpus,
+            "ram_mb": flavor.ram,
+            "disk_gb": flavor.disk,
+            "public": flavor.is_public,
+        }
+        for flavor in conn.compute.flavors()
+    ]
+    emit(rows, ["name", "vcpus", "ram_mb", "disk_gb", "public"], fmt)
+
+
+# --------------------------------------------------------------------------
+# networks (Neutron)
+# --------------------------------------------------------------------------
+@compute.group()
+def networks() -> None:
+    """Neutron networks."""
+
+
+@networks.command("list")
+@CLOUD_OPTION
+@FORMAT_OPTION
+def networks_list(cloud_override: str | None, fmt: str) -> None:
+    conn = connect(cloud_override)
+    rows = [
+        {
+            "name": network.name,
+            "status": network.status,
+            "shared": network.is_shared,
+            "external": network.is_router_external,
+            "subnets": ",".join(network.subnet_ids or []),
+        }
+        for network in conn.network.networks()
+    ]
+    emit(rows, ["name", "status", "shared", "external", "subnets"], fmt)
 
 
 # --------------------------------------------------------------------------
