@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import click
+import openstack
 
 from nubor.core import kube
 from nubor.core.config import connect
@@ -160,11 +161,18 @@ def clusters_get_credentials(
 
     ca_pem = client_pem = key_pem = None
     if not template.is_tls_disabled:
-        ca_pem = magnum.get_cluster_certificate(cluster.uuid).pem
-        key_pem, csr_pem = kube.new_csr()
-        client_pem = magnum.create_cluster_certificate(
-            cluster_uuid=cluster.uuid, csr=csr_pem.decode()
-        ).pem
+        try:
+            ca_pem = magnum.get_cluster_certificate(cluster.uuid).pem
+            key_pem, csr_pem = kube.new_csr()
+            client_pem = magnum.create_cluster_certificate(
+                cluster_uuid=cluster.uuid, csr=csr_pem.decode()
+            ).pem
+        except openstack.exceptions.SDKException as exc:
+            # A cluster that failed to build has no CA to sign against, which
+            # is the common case here and not worth a traceback.
+            click.echo(f"error: Magnum would not issue a certificate ({exc})", err=True)
+            click.echo(f"hint: cluster '{cluster.name}' is {cluster.status}", err=True)
+            sys.exit(1)
 
     context = context_name or cluster.name
     path = kubeconfig or kube.default_path()
