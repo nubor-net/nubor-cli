@@ -5,6 +5,20 @@ this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 Release notes are generated from the entry for each version, so the headings are
 parsed by the release workflow and their format matters.
 
+## [0.6.2] - 2026-08-24
+
+### Fixed
+- `compute instances ssh` now refuses an instance that is not ACTIVE, naming
+  the status and pointing at `instances start`. Nova knows the instance is off
+  before anything is attempted; finding out by way of a login that fails
+  several layers later is the slowest possible way to be told.
+- The failure after a login through a proxy or jump host said the instance was
+  "reachable, but it never accepted the key". Nothing had checked: the port
+  probe is skipped when the route runs through a proxy, so the guest agent was
+  being blamed for what may equally have been a proxy that does not reach port
+  22. It now says which of the two it cannot distinguish, and only claims the
+  instance answered when the probe actually ran.
+
 ## [0.6.1] - 2026-08-24
 
 ### Fixed
