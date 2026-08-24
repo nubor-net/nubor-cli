@@ -59,8 +59,9 @@ def test_get_credentials_signs_a_csr_and_writes_the_file(fake_conn, tmp_path):
         uuid="c-1",
         status="CREATE_COMPLETE",
         api_address="https://api.example:6443",
-        tls_disabled=False,
+        cluster_template_id="t-1",
     )
+    magnum.get_cluster_template.return_value = SimpleNamespace(is_tls_disabled=False)
     magnum.get_cluster_certificate.return_value = SimpleNamespace(pem="CA-PEM")
     magnum.create_cluster_certificate.return_value = SimpleNamespace(pem="CLIENT-PEM")
     path = tmp_path / "kubeconfig"
@@ -83,7 +84,7 @@ def test_get_credentials_signs_a_csr_and_writes_the_file(fake_conn, tmp_path):
 
 def test_get_credentials_refuses_a_cluster_with_no_api_address(fake_conn, tmp_path):
     fake_conn.container_infrastructure_management.find_cluster.return_value = SimpleNamespace(
-        name="prod", uuid="c-1", status="CREATE_IN_PROGRESS", api_address=None, tls_disabled=False
+        name="prod", uuid="c-1", status="CREATE_IN_PROGRESS", api_address=None
     )
     path = tmp_path / "kubeconfig"
     result = CliRunner().invoke(
