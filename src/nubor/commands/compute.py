@@ -427,6 +427,16 @@ def instances_ssh(
     # find_server returns a summary record; addresses only come back in full.
     server = conn.compute.get_server(server.id)
 
+    if server.status != "ACTIVE":
+        # Nova already knows this. Finding out by way of a login that times out
+        # somewhere behind a proxy is the slowest possible way to be told.
+        click.echo(f"error: instance '{server.name}' is {server.status}, not ACTIVE", err=True)
+        if server.status in {"SHUTOFF", "SHELVED", "SHELVED_OFFLOADED", "PAUSED", "SUSPENDED"}:
+            click.echo(f"hint: nubor compute instances start {server.name}", err=True)
+        elif server.status == "BUILD":
+            click.echo("hint: it is still building; try again shortly", err=True)
+        sys.exit(1)
+
     address = ssh_helpers.pick_address(server, internal_ip)
     if not address:
         which = "fixed" if internal_ip else "any"
@@ -461,6 +471,10 @@ def instances_ssh(
         click.echo("error: --tunnel-through and --proxy-command are alternatives", err=True)
         sys.exit(1)
 
+    # Whether anything actually confirmed the address answers. It does not when
+    # the route runs through a proxy or a jump host, and a later failure must
+    # not then be reported as if the instance had been reached.
+    probed = False
     if not dry_run and not tunnel and not (internal_ip and proxy):
         # Try the direct path first and fall back to the proxy on its own, so
         # the common case stays a bare `instances ssh NAME`. The probe is short
@@ -470,6 +484,7 @@ def instances_ssh(
         attempts, delay = (1, 1) if proxy else (12, 5)
         if ssh_helpers.wait_for_port(address, attempts=attempts, delay=delay):
             proxy = None  # reachable directly; no need to involve anything else
+            probed = True
         elif proxy:
             click.echo(f"# no direct route to {address}, going through the proxy", err=True)
         else:
@@ -525,13 +540,32 @@ def instances_ssh(
 
         base = cmd[: -len(ssh_args)] if ssh_args else cmd
         if workdir and not ssh_helpers.wait_for_key(base):
-            # We already know the port answers, so this really is the key.
-            click.echo(f"error: {server.name} reachable, but it never accepted the key", err=True)
-            click.echo(
-                "hint: check 'systemctl status nubor-ssh-agent' in the guest "
-                f"(user '{user}' must exist there)",
-                err=True,
-            )
+            if probed:
+                # The port answered, so the login is the part that failed.
+                click.echo(
+                    f"error: {server.name} answers on {address}:22, but it never accepted the key",
+                    err=True,
+                )
+                click.echo(
+                    "hint: check 'systemctl status nubor-ssh-agent' in the guest "
+                    f"(user '{user}' must exist there)",
+                    err=True,
+                )
+            else:
+                # Nothing verified the route, so the guest agent is only one of
+                # the candidates and naming it alone would be a guess.
+                route = "the jump host" if tunnel else "the proxy command"
+                click.echo(f"error: could not log in to {server.name} through {route}", err=True)
+                click.echo("hint: any of these, and nothing here can tell them apart -", err=True)
+                click.echo(f"        - {route} does not reach {address}:22", err=True)
+                click.echo(
+                    "        - the guest agent is not running "
+                    f"('systemctl status nubor-ssh-agent', user '{user}')",
+                    err=True,
+                )
+                click.echo(
+                    "      to see which, run the ssh command printed above by hand", err=True
+                )
             sys.exit(1)
         try:
             sys.exit(subprocess.call(cmd))

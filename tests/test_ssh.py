@@ -391,3 +391,43 @@ def test_prune_refuses_when_it_cannot_see_across_projects(fake_conn):
     assert result.exit_code == 1
     assert "unknowable" in result.output
     fake_conn.image.delete_image.assert_not_called()
+
+
+def test_ssh_refuses_an_instance_that_is_not_running(fake_conn):
+    _wire(fake_conn, _server(status="SHUTOFF"))
+
+    result = CliRunner().invoke(main, ["compute", "instances", "ssh", "web-1"])
+
+    assert result.exit_code == 1
+    assert "is SHUTOFF, not ACTIVE" in result.output
+    assert "instances start web-1" in result.output
+    fake_conn.compute.set_server_metadata.assert_not_called()
+
+
+def test_ssh_does_not_claim_reachability_it_never_checked(fake_conn, monkeypatch):
+    """--internal-ip with a proxy skips the port probe, so a failed login is
+    not evidence about the guest agent one way or the other."""
+    _wire(fake_conn, _server(metadata={"nubor_agent": "true"}))
+    monkeypatch.setattr(ssh, "wait_for_key", lambda *a, **k: False)
+    monkeypatch.setattr(
+        ssh, "wait_for_port", lambda *a, **k: (_ for _ in ()).throw(AssertionError("probed"))
+    )
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "compute",
+            "instances",
+            "ssh",
+            "web-1",
+            "--internal-ip",
+            "--proxy-command",
+            "nc %h %p",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "could not log in to web-1 through the proxy command" in result.output
+    assert "does not reach 10.0.0.5:22" in result.output
+    assert "nubor-ssh-agent" in result.output
+    assert "never accepted the key" not in result.output
