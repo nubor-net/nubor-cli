@@ -4,6 +4,7 @@ import base64
 from types import SimpleNamespace
 from unittest import mock
 
+import openstack
 import yaml
 from click.testing import CliRunner
 from cryptography import x509
@@ -108,3 +109,28 @@ def test_merge_makes_the_file_private(tmp_path):
     with mock.patch.object(kube.Path, "chmod") as chmod:
         kube.merge(path, *kube.entries("prod", "https://api", "CA", "CERT", b"KEY"))
     chmod.assert_called_once_with(0o600)
+
+
+def test_get_credentials_reports_a_cluster_with_no_certificate(fake_conn, tmp_path):
+    magnum = fake_conn.container_infrastructure_management
+    magnum.find_cluster.return_value = SimpleNamespace(
+        name="broken",
+        uuid="c-2",
+        status="UPDATE_FAILED",
+        api_address="https://api.example:6443",
+        cluster_template_id="t-1",
+    )
+    magnum.get_cluster_template.return_value = SimpleNamespace(is_tls_disabled=False)
+    magnum.get_cluster_certificate.side_effect = openstack.exceptions.NotFoundException(
+        "No ClusterCertificate found"
+    )
+    path = tmp_path / "kubeconfig"
+
+    result = CliRunner().invoke(
+        main,
+        ["container", "clusters", "get-credentials", "broken", "--kubeconfig", str(path)],
+    )
+    assert result.exit_code == 1
+    assert "would not issue a certificate" in result.output
+    assert "UPDATE_FAILED" in result.output
+    assert not path.exists()

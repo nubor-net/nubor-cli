@@ -5,6 +5,14 @@ this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 Release notes are generated from the entry for each version, so the headings are
 parsed by the release workflow and their format matters.
 
+## [0.6.1] - 2026-08-24
+
+### Fixed
+- `container clusters get-credentials` printed a traceback when Magnum refused
+  to issue a certificate, which is what a cluster that failed to build does: it
+  has no CA to sign against. It now reports the refusal and the cluster's
+  status in two lines, like every other failure in the tool.
+
 ## [0.6.0] - 2026-08-24
 
 ### Added
