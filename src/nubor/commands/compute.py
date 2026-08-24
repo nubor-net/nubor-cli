@@ -12,6 +12,7 @@ import click
 import openstack
 
 from nubor.core import ssh as ssh_helpers
+from nubor.core.api import ApiConnection
 from nubor.core.config import connect
 from nubor.core.confirm import QUIET_OPTION, confirm
 from nubor.core.errors import find_or_exit
@@ -65,6 +66,21 @@ def instances_describe(name_or_id: str, cloud_override: str | None, fmt: str) ->
 @click.option("--image", required=True, help="Image name or ID.")
 @click.option("--network", required=True, help="Network name or ID.")
 @click.option("--key-name", default=None, help="Keypair to inject.")
+@click.option(
+    "--static-private-ip",
+    is_flag=True,
+    help="Reserve a private IP automatically through a persistent Neutron port.",
+)
+@click.option(
+    "--static-external-ip",
+    is_flag=True,
+    help="Allocate and attach a floating IP automatically.",
+)
+@click.option(
+    "--external-network",
+    default=None,
+    help="External network name or ID; required only when more than one is available.",
+)
 @click.option("--wait", is_flag=True, help="Wait until the instance is ACTIVE.")
 @QUIET_OPTION
 @CLOUD_OPTION
@@ -74,6 +90,9 @@ def instances_create(
     image: str,
     network: str,
     key_name: str | None,
+    static_private_ip: bool,
+    static_external_ip: bool,
+    external_network: str | None,
     wait: bool,
     quiet: bool,
     cloud_override: str | None,
@@ -83,6 +102,11 @@ def instances_create(
     flavor_obj = find_or_exit(conn.compute.find_flavor, flavor, "flavor")
     image_obj = find_or_exit(conn.image.find_image, image, "image")
     network_obj = find_or_exit(conn.network.find_network, network, "network")
+    if external_network and not static_external_ip:
+        raise click.UsageError("--external-network requires --static-external-ip")
+    external_network_obj = (
+        _resolve_external_network(conn, external_network) if static_external_ip else None
+    )
     confirm(
         [
             f"This will create instance '{name}':",
@@ -90,29 +114,162 @@ def instances_create(
             f"  image:   {image_obj.name} ({image_obj.id})",
             f"  network: {network_obj.name} ({network_obj.id})",
         ]
-        + ([f"  keypair: {key_name}"] if key_name else []),
+        + ([f"  keypair: {key_name}"] if key_name else [])
+        + (
+            ["  private IP: reserve automatically (persistent DHCP port)"]
+            if static_private_ip
+            else []
+        )
+        + (
+            [
+                "  external IP: allocate automatically "
+                f"from {external_network_obj.name} ({external_network_obj.id})"
+            ]
+            if external_network_obj
+            else []
+        ),
         quiet,
     )
+    if isinstance(conn, ApiConnection):
+        server = conn.create_instance(
+            name=name,
+            flavor=flavor_obj,
+            image=image_obj,
+            network=network_obj,
+            key_name=key_name,
+            static_private=static_private_ip,
+            static_external=static_external_ip,
+            external_network=external_network_obj,
+        )
+        if wait:
+            server = _wait_for_server(conn, server)
+        click.echo(f"Created instance '{server.name}' (id: {server.id}, status: {server.status}).")
+        for entries in (server.addresses or {}).values():
+            for address in entries:
+                click.echo(f"Address: {address.get('addr')}")
+        return
+    static_port = _reserve_private_port(conn, name, network_obj) if static_private_ip else None
     args: dict = {
         "name": name,
         "flavor_id": flavor_obj.id,
         "image_id": image_obj.id,
-        "networks": [{"uuid": network_obj.id}],
+        "networks": [{"port": static_port.id}] if static_port else [{"uuid": network_obj.id}],
     }
     if key_name:
         args["key_name"] = key_name
     server = conn.compute.create_server(**args)
-    if wait:
-        try:
-            server = conn.compute.wait_for_server(server)
-        except openstack.exceptions.ResourceFailure as exc:
-            server = conn.compute.get_server(server.id)
-            fault = getattr(server, "fault", None) or {}
-            reason = fault.get("message") or str(exc)
-            raise click.ClickException(
-                f"instance '{server.name}' (id: {server.id}) entered ERROR: {reason}"
-            ) from None
+    if wait or static_external_ip:
+        server = _wait_for_server(conn, server)
     click.echo(f"Created instance '{server.name}' (id: {server.id}, status: {server.status}).")
+    if static_port:
+        addresses = ", ".join(
+            fixed_ip["ip_address"] for fixed_ip in (getattr(static_port, "fixed_ips", None) or [])
+        )
+        click.echo(
+            f"Reserved private IP{f' {addresses}' if addresses else ''} "
+            f"on persistent port '{static_port.name}' (id: {static_port.id})."
+        )
+    if external_network_obj:
+        target_port = static_port or _server_port(conn, server, network_obj)
+        floating_ip = _reserve_floating_ip(conn, name, external_network_obj, target_port)
+        click.echo(
+            f"Reserved external IP {floating_ip.floating_ip_address} (id: {floating_ip.id})."
+        )
+
+
+def _wait_for_server(conn, server):
+    try:
+        return conn.compute.wait_for_server(server)
+    except openstack.exceptions.ResourceFailure as exc:
+        server = conn.compute.get_server(server.id)
+        fault = getattr(server, "fault", None) or {}
+        reason = fault.get("message") or str(exc)
+        raise click.ClickException(
+            f"instance '{server.name}' (id: {server.id}) entered ERROR: {reason}"
+        ) from None
+
+
+def _reserve_private_port(conn, instance_name, network):
+    port_name = f"{instance_name}-static-private"
+    matches = [
+        port
+        for port in conn.network.ports(network_id=network.id)
+        if getattr(port, "name", None) == port_name
+    ]
+    if len(matches) > 1:
+        raise click.ClickException(
+            f"multiple ports named '{port_name}' exist on network '{network.name}'"
+        )
+    if matches:
+        port = matches[0]
+        if getattr(port, "device_id", None):
+            raise click.ClickException(
+                f"persistent port '{port_name}' is already attached to device {port.device_id}"
+            )
+        return port
+    return conn.network.create_port(name=port_name, network_id=network.id)
+
+
+def _resolve_external_network(conn, requested):
+    if requested:
+        network = find_or_exit(conn.network.find_network, requested, "external network")
+        if not getattr(network, "is_router_external", False):
+            raise click.ClickException(f"network '{network.name}' is not external")
+        return network
+    networks = [
+        network
+        for network in conn.network.networks(is_router_external=True)
+        if getattr(network, "is_router_external", False)
+    ]
+    if not networks:
+        raise click.ClickException("no external network is available")
+    if len(networks) > 1:
+        names = ", ".join(sorted(network.name for network in networks))
+        raise click.ClickException(
+            f"multiple external networks are available ({names}); "
+            "select one with --external-network"
+        )
+    return networks[0]
+
+
+def _server_port(conn, server, network):
+    ports = list(conn.network.ports(device_id=server.id, network_id=network.id))
+    if len(ports) != 1:
+        raise click.ClickException(
+            f"expected one port for instance '{server.name}' on network '{network.name}', "
+            f"found {len(ports)}"
+        )
+    return ports[0]
+
+
+def _reserve_floating_ip(conn, instance_name, external_network, target_port):
+    description = f"nubor static external IP for {instance_name}"
+    matches = [
+        floating_ip
+        for floating_ip in conn.network.ips()
+        if getattr(floating_ip, "description", None) == description
+        and getattr(floating_ip, "floating_network_id", None) == external_network.id
+    ]
+    if len(matches) > 1:
+        raise click.ClickException(
+            f"multiple floating IPs are reserved for instance '{instance_name}'"
+        )
+    floating_ip = (
+        matches[0]
+        if matches
+        else conn.network.create_ip(
+            floating_network_id=external_network.id,
+            description=description,
+        )
+    )
+    attached_port_id = getattr(floating_ip, "port_id", None)
+    if attached_port_id and attached_port_id != target_port.id:
+        raise click.ClickException(
+            f"reserved floating IP {floating_ip.floating_ip_address} is already attached elsewhere"
+        )
+    if not attached_port_id:
+        floating_ip = conn.network.update_ip(floating_ip, port_id=target_port.id)
+    return floating_ip
 
 
 @instances.command("delete")
@@ -304,13 +461,13 @@ def instances_ssh(
         click.echo("error: --tunnel-through and --proxy-command are alternatives", err=True)
         sys.exit(1)
 
-    if not dry_run and not tunnel:
+    if not dry_run and not tunnel and not (internal_ip and proxy):
         # Try the direct path first and fall back to the proxy on its own, so
         # the common case stays a bare `instances ssh NAME`. The probe is short
         # when there is somewhere to fall back to and patient when there is
         # not, because then the only thing worth waiting for is a booting
         # instance.
-        attempts, delay = (2, 3) if proxy else (12, 5)
+        attempts, delay = (1, 1) if proxy else (12, 5)
         if ssh_helpers.wait_for_port(address, attempts=attempts, delay=delay):
             proxy = None  # reachable directly; no need to involve anything else
         elif proxy:

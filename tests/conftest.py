@@ -12,6 +12,8 @@ def isolated_state(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, "STATE_DIR", tmp_path)
     monkeypatch.setattr(config, "ACTIVE_CONFIG_FILE", tmp_path / "active_configuration")
+    monkeypatch.setattr(config, "_validate_private_connection", lambda conn: conn)
+    monkeypatch.setenv("NUBOR_DIRECT", "1")
     return tmp_path
 
 

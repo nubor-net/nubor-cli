@@ -143,6 +143,176 @@ def test_instances_create_declined_makes_no_api_call(fake_conn):
     fake_conn.compute.create_server.assert_not_called()
 
 
+def test_instances_create_can_reserve_private_ip_without_an_address(fake_conn):
+    fake_conn.compute.find_flavor.return_value = _named_mock("m1.tiny", id="f-1")
+    fake_conn.image.find_image.return_value = _named_mock("ubuntu", id="i-1")
+    fake_conn.network.find_network.return_value = _named_mock("lan", id="n-1")
+    fake_conn.network.ports.return_value = []
+    port = _named_mock(
+        "vm1-static-private",
+        id="p-1",
+        fixed_ips=[{"subnet_id": "sub-1", "ip_address": "10.0.0.23"}],
+    )
+    fake_conn.network.create_port.return_value = port
+    fake_conn.compute.create_server.return_value = _named_mock("vm1", id="s-9", status="BUILD")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "compute",
+            "instances",
+            "create",
+            "vm1",
+            "--flavor",
+            "m1.tiny",
+            "--image",
+            "ubuntu",
+            "--network",
+            "lan",
+            "--static-private-ip",
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "10.0.0.23" in result.output
+    fake_conn.network.create_port.assert_called_once_with(
+        name="vm1-static-private", network_id="n-1"
+    )
+    fake_conn.compute.create_server.assert_called_once_with(
+        name="vm1",
+        flavor_id="f-1",
+        image_id="i-1",
+        networks=[{"port": "p-1"}],
+    )
+
+
+def test_instances_create_reuses_an_unattached_private_reservation(fake_conn):
+    fake_conn.compute.find_flavor.return_value = _named_mock("m1.tiny", id="f-1")
+    fake_conn.image.find_image.return_value = _named_mock("ubuntu", id="i-1")
+    fake_conn.network.find_network.return_value = _named_mock("lan", id="n-1")
+    port = _named_mock(
+        "vm1-static-private",
+        id="p-1",
+        device_id="",
+        fixed_ips=[{"subnet_id": "sub-1", "ip_address": "10.0.0.23"}],
+    )
+    fake_conn.network.ports.return_value = [port]
+    fake_conn.compute.create_server.return_value = _named_mock("vm1", id="s-9", status="BUILD")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "compute",
+            "instances",
+            "create",
+            "vm1",
+            "--flavor",
+            "m1.tiny",
+            "--image",
+            "ubuntu",
+            "--network",
+            "lan",
+            "--static-private-ip",
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 0
+    fake_conn.network.create_port.assert_not_called()
+    assert fake_conn.compute.create_server.call_args.kwargs["networks"] == [{"port": "p-1"}]
+
+
+def test_instances_create_can_allocate_external_ip_without_an_address(fake_conn):
+    fake_conn.compute.find_flavor.return_value = _named_mock("m1.tiny", id="f-1")
+    fake_conn.image.find_image.return_value = _named_mock("ubuntu", id="i-1")
+    fake_conn.network.find_network.return_value = _named_mock("lan", id="n-1")
+    external = _named_mock("public", id="ext-1", is_router_external=True)
+    fake_conn.network.networks.return_value = [external]
+    server = _named_mock("vm1", id="s-9", status="BUILD")
+    active_server = _named_mock("vm1", id="s-9", status="ACTIVE")
+    fake_conn.compute.create_server.return_value = server
+    fake_conn.compute.wait_for_server.return_value = active_server
+    server_port = _named_mock("vm1-port", id="p-1")
+    fake_conn.network.ports.return_value = [server_port]
+    fake_conn.network.ips.return_value = []
+    reserved = _named_mock(
+        "floating",
+        id="fip-1",
+        floating_ip_address="172.24.4.23",
+        floating_network_id="ext-1",
+        port_id=None,
+    )
+    attached = _named_mock(
+        "floating",
+        id="fip-1",
+        floating_ip_address="172.24.4.23",
+        floating_network_id="ext-1",
+        port_id="p-1",
+    )
+    fake_conn.network.create_ip.return_value = reserved
+    fake_conn.network.update_ip.return_value = attached
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "compute",
+            "instances",
+            "create",
+            "vm1",
+            "--flavor",
+            "m1.tiny",
+            "--image",
+            "ubuntu",
+            "--network",
+            "lan",
+            "--static-external-ip",
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "172.24.4.23" in result.output
+    fake_conn.compute.wait_for_server.assert_called_once_with(server)
+    fake_conn.network.create_ip.assert_called_once_with(
+        floating_network_id="ext-1",
+        description="nubor static external IP for vm1",
+    )
+    fake_conn.network.update_ip.assert_called_once_with(reserved, port_id="p-1")
+
+
+def test_instances_create_requires_external_network_choice_when_ambiguous(fake_conn):
+    fake_conn.compute.find_flavor.return_value = _named_mock("m1.tiny", id="f-1")
+    fake_conn.image.find_image.return_value = _named_mock("ubuntu", id="i-1")
+    fake_conn.network.find_network.return_value = _named_mock("lan", id="n-1")
+    fake_conn.network.networks.return_value = [
+        _named_mock("public-a", id="ext-1", is_router_external=True),
+        _named_mock("public-b", id="ext-2", is_router_external=True),
+    ]
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "compute",
+            "instances",
+            "create",
+            "vm1",
+            "--flavor",
+            "m1.tiny",
+            "--image",
+            "ubuntu",
+            "--network",
+            "lan",
+            "--static-external-ip",
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--external-network" in result.output
+    fake_conn.compute.create_server.assert_not_called()
+
+
 def test_instances_create_wait_reports_nova_fault_without_traceback(fake_conn):
     fake_conn.compute.find_flavor.return_value = _named_mock("e2-small", id="f-1")
     fake_conn.image.find_image.return_value = _named_mock("ubuntu", id="i-1")

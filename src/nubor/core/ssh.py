@@ -218,13 +218,14 @@ def wait_for_port(host: str, port: int = 22, attempts: int = 12, delay: int = 5)
         except OSError:
             if attempt == 0:
                 click.echo(f"# waiting for {host}:{port}...", err=True)
-            time.sleep(delay)
+            if attempt + 1 < attempts:
+                time.sleep(delay)
         finally:
             sock.close()
     return False
 
 
-def wait_for_key(cmd: list[str], attempts: int = 6, delay: int = 5) -> bool:
+def wait_for_key(cmd: list[str], attempts: int = 7, delay: int = 2) -> bool:
     """Poll until the guest agent has picked the key up; it polls on its own
     schedule, so the first attempt usually fails."""
     probe = [cmd[0], "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", *cmd[1:], "true"]

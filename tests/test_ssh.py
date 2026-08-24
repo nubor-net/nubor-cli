@@ -205,9 +205,11 @@ def test_unreachable_address_is_reported_as_such_and_injects_nothing(fake_conn, 
 def test_falls_back_to_a_saved_proxy_when_there_is_no_direct_route(fake_conn, monkeypatch):
     _wire(fake_conn)
     ssh.save_proxy_command("cloudflared access ssh --hostname {instance}.ssh.example.net")
-    monkeypatch.setattr(ssh, "wait_for_port", lambda *a, **k: False)
+    wait = mock.Mock(return_value=False)
+    monkeypatch.setattr(ssh, "wait_for_port", wait)
     with mock.patch("subprocess.call", return_value=0) as called:
         CliRunner().invoke(main, ["compute", "instances", "ssh", "web-1", "--user", "ubuntu"])
+    wait.assert_called_once_with("10.0.0.5", attempts=1, delay=1)
     assert "ProxyCommand=cloudflared access ssh --hostname web-1.ssh.example.net" in (
         " ".join(called.call_args[0][0])
     )
@@ -220,6 +222,20 @@ def test_a_reachable_address_ignores_the_saved_proxy(fake_conn, monkeypatch):
     with mock.patch("subprocess.call", return_value=0) as called:
         CliRunner().invoke(main, ["compute", "instances", "ssh", "web-1", "--user", "ubuntu"])
     assert "ProxyCommand" not in " ".join(called.call_args[0][0])
+
+
+def test_internal_address_uses_the_saved_proxy_without_a_route_probe(fake_conn, monkeypatch):
+    _wire(fake_conn)
+    ssh.save_proxy_command("proxy %h %p")
+    wait = mock.Mock()
+    monkeypatch.setattr(ssh, "wait_for_port", wait)
+    with mock.patch("subprocess.call", return_value=0) as called:
+        CliRunner().invoke(
+            main,
+            ["compute", "instances", "ssh", "web-1", "--user", "ubuntu", "--internal-ip"],
+        )
+    wait.assert_not_called()
+    assert "ProxyCommand=proxy %h %p" in " ".join(called.call_args[0][0])
 
 
 def test_ssh_proxy_save_show_and_clear():

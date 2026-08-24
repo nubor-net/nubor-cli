@@ -1,11 +1,10 @@
 # nubor
 
-A command-line client for OpenStack clouds. Named configurations you switch
-between, backed by `clouds.yaml` — the same file `openstack` and
-`openstacksdk` already read, nothing proprietary. Table output by default,
-`--format json` or `--format yaml` for scripting. Commands that change state
-show exactly what they resolved and ask before acting; `--quiet` skips the
-prompt for scripts.
+A command-line client for `https://api.nubor.net`. It authenticates with
+Authelia OIDC Device Flow and MFA, stores session material only in the operating
+system credential store, and uses project `roger` by default. Direct OpenStack
+access remains available only as explicit private-network break glass with
+`--direct`. Table output is the default; JSON and YAML are available for scripts.
 
 ## Commands
 
@@ -16,9 +15,9 @@ prompt for scripts.
 | `nubor compute networks list` | Neutron |
 | `nubor compute images list / prune` | Glance |
 | `nubor compute disks list / create / delete` | Cinder |
-| `nubor container clusters list / describe / create / delete` | Magnum |
-| `nubor config configurations list / activate` | clouds.yaml |
-| `nubor auth login / list` | Keystone |
+| `nubor container clusters list / describe / create / delete / get-credentials` | Magnum |
+| `nubor config configurations list / activate` | Nubor API project; clouds.yaml with `--direct` |
+| `nubor auth login / list / logout` | Authelia OIDC + Nubor API + Keystone |
 | `nubor components list / update` | nubor release installer |
 
 ## Install
@@ -81,29 +80,27 @@ gh attestation verify nubor-0.3.0-linux-x86_64.tar.gz --repo nubor-net/nubor-cli
 
 ## Auth
 
-nubor never collects or stores a password itself. It connects the way
-`openstack` does, resolving the cloud in order:
-
-1. `--cloud <name>` on any command,
-2. the active configuration (`nubor config configurations activate <name>`),
-3. whatever `openstacksdk` finds on its own — a `clouds.yaml` default cloud,
-   or `OS_*` environment variables from a sourced openrc file.
-
-Put your credentials in `~/.config/openstack/clouds.yaml` with whatever auth
-method you already use for the `openstack` CLI (an application credential is
-a good choice), then:
+nubor never asks for or stores an OpenStack password in normal operation. Login
+uses OIDC Device Flow with MFA; OIDC refresh and Keystone tokens remain only in
+Credential Manager, Keychain or libsecret, and the session cannot exceed eight
+hours.
 
 ```bash
 nubor config configurations list
-nubor config configurations activate <name>
+nubor config configurations activate roger
 nubor auth login
 ```
+
+For break glass from a private network, configure a private endpoint through
+`clouds.yaml` or `OS_*` variables and add `--direct`. The CLI rejects non-private
+OpenStack endpoints in this mode.
 
 ## Examples
 
 ```bash
 nubor compute instances list
 nubor compute instances create web1 --flavor m1.small --image ubuntu-24.04 --network lan --wait
+nubor compute instances create web2 --flavor m1.small --image ubuntu-24.04 --network lan --static-private-ip --static-external-ip
 nubor compute instances describe web1 --format json
 nubor compute instances stop web1
 nubor compute instances start web1
@@ -113,9 +110,33 @@ nubor compute networks list
 nubor compute disks create scratch --size 10
 nubor compute disks delete scratch          # prompts; add -q to skip
 nubor container clusters list
+nubor container clusters get-credentials prod   # writes ~/.kube/config
 nubor compute instances ssh web1
 nubor compute instances ssh web1 -- -L 8080:localhost:80    # after -- goes to ssh
 ```
+
+`container clusters get-credentials` does what `gcloud container clusters
+get-credentials` does: it writes a kubeconfig entry for the cluster and makes it
+the current context, so `kubectl` works straight afterwards. The private key is
+generated locally and never leaves the machine - only a certificate signing
+request is sent, and Magnum returns a signed client certificate for
+`admin`/`system:masters`. The certificate and key are embedded in the
+kubeconfig, so the file is the whole credential; it is written with mode 0600
+and merged into whatever is already there rather than replacing it. Use
+`--kubeconfig` to write elsewhere and `--context` to name the context something
+other than the cluster.
+
+`--static-private-ip` creates a persistent Neutron port without specifying an
+address. Neutron allocates an address from the subnet pool and DHCP configures
+that same fixed address in the guest. The named port is reused when it is free,
+so deleting and recreating the instance does not discard the reservation.
+
+`--static-external-ip` allocates and attaches a floating IP without specifying
+an address. If the project can see more than one external network, select the
+pool with `--external-network NAME`; the address itself is still allocated
+automatically. A floating IP is a persistent Neutron NAT resource, not an
+address delivered to the guest by DHCP. Using either flag is optional, and the
+existing create behavior is unchanged when neither is present.
 
 ## SSH
 
