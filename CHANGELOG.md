@@ -7,6 +7,13 @@ parsed by the release workflow and their format matters.
 
 ## [Unreleased]
 
+### Added
+
+- `nubor components list` reports installed and available versions in a
+  gcloud-style component table, with an offline `--only-local-state` mode.
+- `nubor components update` installs the latest or a selected release
+  through the existing checksum-verifying platform installer.
+
 ## [0.4.0] - 2026-08-22
 
 ### Added
