@@ -54,7 +54,14 @@ nubor components update
 ```
 
 The list shows the local and latest available versions in a gcloud-style
-component table. Pass `--only-local-state` when working offline.
+component table, followed by a row for each OpenStack API nubor calls -
+Keystone, Nova, Glance, Cinder, Neutron and Magnum - with the version the cloud
+serves and the version nubor needs. That is the part an update cannot fix: a
+cloud below the floor stays incompatible whatever version of nubor is
+installed, so it is worth reading before updating rather than after. Version
+discovery needs the endpoint, so the service rows only carry versions under
+`--direct`. Pass `--only-local-state` when working offline; it contacts
+neither GitHub nor the cloud.
 
 ### From source
 

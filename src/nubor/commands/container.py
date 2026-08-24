@@ -154,9 +154,12 @@ def clusters_get_credentials(
         )
         sys.exit(1)
 
+    magnum = conn.container_infrastructure_management
+    # tls_disabled lives on the template, not the cluster.
+    template = magnum.get_cluster_template(cluster.cluster_template_id)
+
     ca_pem = client_pem = key_pem = None
-    if not cluster.tls_disabled:
-        magnum = conn.container_infrastructure_management
+    if not template.is_tls_disabled:
         ca_pem = magnum.get_cluster_certificate(cluster.uuid).pem
         key_pem, csr_pem = kube.new_csr()
         client_pem = magnum.create_cluster_certificate(

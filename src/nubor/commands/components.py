@@ -22,17 +22,79 @@ REPOSITORY = "nubor-net/nubor-cli"
 GITHUB_API = f"https://api.github.com/repos/{REPOSITORY}"
 VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?")
 
+# The OpenStack APIs nubor calls, and the lowest version of each that its
+# commands are written against. A cloud older than this is the case that
+# matters: updating nubor cannot fix it, so it has to be visible before the
+# update rather than as a failing call afterwards.
+SERVICE_APIS = [
+    ("Keystone (identity)", "identity", (3, 0)),
+    ("Nova (compute)", "compute", (2, 1)),
+    ("Glance (image)", "image", (2, 0)),
+    ("Cinder (block storage)", "block_storage", (3, 0)),
+    ("Neutron (network)", "network", (2, 0)),
+    ("Magnum (container infra)", "container_infrastructure_management", (1, 0)),
+]
+
 
 @click.group()
 def components() -> None:
     """Inspect and update installed nubor components."""
 
 
+def _version_text(value: tuple[int, ...] | None) -> str:
+    return ".".join(str(part) for part in value) if value else "unknown"
+
+
+def _service_rows() -> list[dict[str, str]]:
+    """One row per OpenStack API, reporting what the cloud serves against what
+    nubor needs. Version discovery is unauthenticated metadata, but it still
+    needs an endpoint, which only the direct connection has."""
+    from nubor.core.config import connect, direct_mode
+
+    if not direct_mode():
+        return [
+            {
+                "status": "Unknown",
+                "name": name,
+                "id": proxy_name.replace("_", "-"),
+                "installed_version": "via api.nubor.net",
+                "latest_version": f"needs {_version_text(required)}+",
+            }
+            for name, proxy_name, required in SERVICE_APIS
+        ]
+
+    conn = connect()
+    rows = []
+    for name, proxy_name, required in SERVICE_APIS:
+        try:
+            data = getattr(conn, proxy_name).get_endpoint_data()
+            served = data.max_microversion or data.api_version
+            floor = data.min_microversion
+        except Exception:  # noqa: BLE001 - an unreachable service is a row, not a crash
+            served = floor = None
+        if served is None:
+            status = "Unknown"
+        elif served < required or (floor and floor > required):
+            status = "Incompatible"
+        else:
+            status = "Compatible"
+        rows.append(
+            {
+                "status": status,
+                "name": name,
+                "id": proxy_name.replace("_", "-"),
+                "installed_version": _version_text(served),
+                "latest_version": f"needs {_version_text(required)}+",
+            }
+        )
+    return rows
+
+
 @components.command("list")
 @click.option(
     "--only-local-state",
     is_flag=True,
-    help="Do not contact GitHub to check the latest available version.",
+    help="Do not contact GitHub or the cloud; report what is on disk.",
 )
 @FORMAT_OPTION
 def components_list(only_local_state: bool, fmt: str) -> None:
@@ -44,19 +106,18 @@ def components_list(only_local_state: bool, fmt: str) -> None:
         if latest != "unknown":
             click.echo(f"The latest available version is: {latest}")
         click.echo()
-    emit(
-        [
-            {
-                "status": status,
-                "name": "nubor CLI core",
-                "id": "nubor",
-                "installed_version": __version__,
-                "latest_version": latest,
-            }
-        ],
-        ["status", "name", "id", "installed_version", "latest_version"],
-        fmt,
-    )
+    rows = [
+        {
+            "status": status,
+            "name": "nubor CLI core",
+            "id": "nubor",
+            "installed_version": __version__,
+            "latest_version": latest,
+        }
+    ]
+    if not only_local_state:
+        rows += _service_rows()
+    emit(rows, ["status", "name", "id", "installed_version", "latest_version"], fmt)
 
 
 def _validated_version(value: str) -> str:

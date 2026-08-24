@@ -5,6 +5,23 @@ this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 Release notes are generated from the entry for each version, so the headings are
 parsed by the release workflow and their format matters.
 
+## [0.6.0] - 2026-08-24
+
+### Added
+- `nubor components list` now reports the Keystone, Nova, Glance, Cinder,
+  Neutron and Magnum API versions the cloud serves against the versions nubor
+  calls, marking each Compatible, Incompatible or Unknown. An update cannot
+  raise a cloud's API version, so the mismatch that no upgrade will fix is
+  visible before the upgrade. `--only-local-state` contacts neither GitHub nor
+  the cloud.
+
+### Fixed
+- `nubor container clusters get-credentials` read `tls_disabled` from the
+  cluster, where it does not exist, so every call failed with an
+  AttributeError. It is a cluster template field, and openstacksdk calls it
+  `is_tls_disabled`. 0.5.0 shipped this command without it having been run
+  against a live Magnum.
+
 ## [0.5.0] - 2026-08-24
 
 ### Added
