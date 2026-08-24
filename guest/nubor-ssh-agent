@@ -30,7 +30,7 @@ import urllib.request
 
 METADATA_URL = "http://169.254.169.254/openstack/latest/meta_data.json"
 METADATA_PREFIX = "nubor_ssh_"
-POLL_SECONDS = 10
+POLL_SECONDS = 2
 STATE_FILE = "/var/lib/nubor/managed-users"
 
 BEGIN_MARK = "# BEGIN nubor ephemeral keys - managed by nubor-ssh-agent, do not edit"

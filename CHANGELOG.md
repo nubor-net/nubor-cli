@@ -5,7 +5,7 @@ this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 Release notes are generated from the entry for each version, so the headings are
 parsed by the release workflow and their format matters.
 
-## [Unreleased]
+## [0.5.0] - 2026-08-24
 
 ### Added
 
@@ -13,6 +13,30 @@ parsed by the release workflow and their format matters.
   gcloud-style component table, with an offline `--only-local-state` mode.
 - `nubor components update` installs the latest or a selected release
   through the existing checksum-verifying platform installer.
+- `nubor compute instances create --static-private-ip` reserves an
+  automatically allocated private address through a persistent Neutron port,
+  and `--static-external-ip` automatically allocates and attaches a floating
+  IP. Neither option requires choosing an address.
+- `nubor container clusters get-credentials`, which writes a kubeconfig entry
+  for a Magnum cluster and makes it the current context, the way `gcloud
+  container clusters get-credentials` does. The private key is generated
+  locally and never sent; Magnum signs a CSR for `admin`/`system:masters`. The
+  file is merged, not replaced, and written 0600.
+
+### Changed
+- Commands now talk to the Nubor API at `https://api.nubor.net` by default
+  instead of calling OpenStack directly, and `nubor auth login` is an OIDC
+  device-flow login with MFA whose tokens live in the operating system's
+  credential store. `nubor auth logout` revokes the session. The active
+  configuration names an API project rather than a `clouds.yaml` entry.
+- `--direct` is the break-glass path back to a private OpenStack endpoint, and
+  refuses any authentication URL that is not private. Magnum and image deletion
+  are only available there.
+
+### Fixed
+- The API facade named its Magnum property `container_infrastructure`, which no
+  command asks for, so a cluster command against the API endpoint raised an
+  AttributeError instead of saying that Magnum needs `--direct`.
 
 ## [0.4.0] - 2026-08-22
 

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import click
 
+from nubor.core import kube
 from nubor.core.config import connect
 from nubor.core.confirm import QUIET_OPTION, confirm
 from nubor.core.errors import find_or_exit
@@ -114,3 +118,52 @@ def clusters_delete(name_or_id: str, quiet: bool, cloud_override: str | None) ->
     )
     conn.container_infrastructure_management.delete_cluster(cluster)
     click.echo(f"Deleted cluster '{cluster.name}'.")
+
+
+@clusters.command("get-credentials")
+@click.argument("name_or_id")
+@click.option(
+    "--kubeconfig",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="File to write. Defaults to $KUBECONFIG's first entry, else ~/.kube/config.",
+)
+@click.option(
+    "--context", "context_name", default=None, help="Context name. Defaults to the cluster name."
+)
+@CLOUD_OPTION
+def clusters_get_credentials(
+    name_or_id: str,
+    kubeconfig: Path | None,
+    context_name: str | None,
+    cloud_override: str | None,
+) -> None:
+    """Write kubeconfig credentials for a cluster, so kubectl can reach it.
+
+    Magnum signs a client certificate from a CSR generated here; the private key
+    is written into the kubeconfig and never sent to the cloud.
+    """
+    conn = connect(cloud_override)
+    cluster = find_or_exit(
+        conn.container_infrastructure_management.find_cluster, name_or_id, "cluster"
+    )
+    if not cluster.api_address:
+        click.echo(
+            f"error: cluster '{cluster.name}' has no API address yet (status: {cluster.status})",
+            err=True,
+        )
+        sys.exit(1)
+
+    ca_pem = client_pem = key_pem = None
+    if not cluster.tls_disabled:
+        magnum = conn.container_infrastructure_management
+        ca_pem = magnum.get_cluster_certificate(cluster.uuid).pem
+        key_pem, csr_pem = kube.new_csr()
+        client_pem = magnum.create_cluster_certificate(
+            cluster_uuid=cluster.uuid, csr=csr_pem.decode()
+        ).pem
+
+    context = context_name or cluster.name
+    path = kubeconfig or kube.default_path()
+    kube.merge(path, *kube.entries(context, cluster.api_address, ca_pem, client_pem, key_pem))
+    click.echo(f"Wrote credentials for '{cluster.name}' to {path} (context: {context}).")

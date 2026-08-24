@@ -14,6 +14,8 @@ RUNTIME_MODULES = [
     "os_service_types",
     "dogpile",
     "stevedore",
+    # keyring finds its OS backend through entry points at login time.
+    "keyring",
 ]
 
 # collect_all() looks metadata up by distribution name, which differs from the
@@ -24,6 +26,7 @@ RUNTIME_MODULES = [
 METADATA_DISTRIBUTIONS = [
     "openstacksdk",
     "dogpile.cache",
+    "keyring",
 ]
 
 datas, binaries, hiddenimports = [], [], []

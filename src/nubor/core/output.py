@@ -20,7 +20,10 @@ CLOUD_OPTION = click.option(
     "--cloud",
     "cloud_override",
     default=None,
-    help="clouds.yaml entry to use for this call only (overrides the active configuration).",
+    help=(
+        "API project to use for this call; with --direct, a clouds.yaml entry "
+        "(overrides the active configuration)."
+    ),
 )
 
 
