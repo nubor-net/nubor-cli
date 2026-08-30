@@ -61,3 +61,15 @@ def test_clusters_delete_declined_makes_no_api_call(fake_conn):
     result = CliRunner().invoke(main, ["container", "clusters", "delete", "prod"], input="n\n")
     assert result.exit_code == 1
     fake_conn.container_infrastructure_management.delete_cluster.assert_not_called()
+
+
+def test_clusters_resize_quiet_calls_magnum_resource_action(fake_conn):
+    cluster = _named_mock("prod", uuid="c-1", status="UPDATE_COMPLETE", node_count=3)
+    fake_conn.container_infrastructure_management.find_cluster.return_value = cluster
+
+    result = CliRunner().invoke(main, ["container", "clusters", "resize", "prod", "4", "-q"])
+
+    assert result.exit_code == 0
+    cluster.resize.assert_called_once_with(
+        fake_conn.container_infrastructure_management, node_count=4
+    )
