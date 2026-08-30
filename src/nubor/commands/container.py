@@ -121,6 +121,29 @@ def clusters_delete(name_or_id: str, quiet: bool, cloud_override: str | None) ->
     click.echo(f"Deleted cluster '{cluster.name}'.")
 
 
+@clusters.command("resize")
+@click.argument("name_or_id")
+@click.argument("node_count", type=click.IntRange(min=1))
+@QUIET_OPTION
+@CLOUD_OPTION
+def clusters_resize(
+    name_or_id: str, node_count: int, quiet: bool, cloud_override: str | None
+) -> None:
+    """Resize a Kubernetes cluster to NODE_COUNT worker nodes."""
+    conn = connect(cloud_override)
+    magnum = conn.container_infrastructure_management
+    cluster = find_or_exit(magnum.find_cluster, name_or_id, "cluster")
+    confirm(
+        [
+            f"This will resize cluster '{cluster.name}' ({cluster.uuid}):",
+            f"  workers: {cluster.node_count} -> {node_count}",
+        ],
+        quiet,
+    )
+    cluster.resize(magnum, node_count=node_count)
+    click.echo(f"Resizing cluster '{cluster.name}' to {node_count} worker(s).")
+
+
 @clusters.command("get-credentials")
 @click.argument("name_or_id")
 @click.option(

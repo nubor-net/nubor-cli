@@ -15,7 +15,7 @@ access remains available only as explicit private-network break glass with
 | `nubor compute networks list` | Neutron |
 | `nubor compute images list / prune` | Glance |
 | `nubor compute disks list / create / delete` | Cinder |
-| `nubor container clusters list / describe / create / delete / get-credentials` | Magnum |
+| `nubor container clusters list / describe / create / resize / delete / get-credentials` | Magnum |
 | `nubor config configurations list / activate` | Nubor API project; clouds.yaml with `--direct` |
 | `nubor auth login / list / logout` | Authelia OIDC + Nubor API + Keystone |
 | `nubor components list / update` | nubor release installer |
@@ -117,6 +117,7 @@ nubor compute networks list
 nubor compute disks create scratch --size 10
 nubor compute disks delete scratch          # prompts; add -q to skip
 nubor container clusters list
+nubor container clusters resize prod 4       # prompts; add -q to skip
 nubor container clusters get-credentials prod   # writes ~/.kube/config
 nubor compute instances ssh web1
 nubor compute instances ssh web1 -- -L 8080:localhost:80    # after -- goes to ssh
