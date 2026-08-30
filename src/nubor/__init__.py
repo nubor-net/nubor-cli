@@ -2,4 +2,4 @@
 
 # Single source of truth for the version. pyproject.toml reads this attribute,
 # and the release workflow checks the git tag against it before building.
-__version__ = "0.6.2"
+__version__ = "0.7.0"
