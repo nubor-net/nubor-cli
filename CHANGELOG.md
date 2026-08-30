@@ -5,6 +5,13 @@ this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 Release notes are generated from the entry for each version, so the headings are
 parsed by the release workflow and their format matters.
 
+## [0.7.0] - 2026-08-30
+
+### Added
+- `nubor container clusters resize NAME_OR_ID NODE_COUNT` resizes a Magnum
+  Kubernetes cluster to the requested worker count, with confirmation by default
+  and `-q` for scripts.
+
 ## [0.6.2] - 2026-08-24
 
 ### Fixed
